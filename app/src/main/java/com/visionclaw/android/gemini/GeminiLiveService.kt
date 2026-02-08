@@ -6,12 +6,13 @@ import com.squareup.moshi.Moshi
 import com.visionclaw.android.openclaw.ToolDeclarations
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import okhttp3.*
-import okio.ByteString
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -49,7 +50,11 @@ class GeminiLiveService @Inject constructor(
     // Channel for received tool calls
     val toolCallChannel = Channel<FunctionCall>(Channel.BUFFERED)
 
+    // Signal when AI finishes speaking (turnComplete received)
+    val turnCompleteChannel = Channel<Unit>(Channel.CONFLATED)
+
     private var webSocket: WebSocket? = null
+    private var serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * Connect to Gemini Live API and send setup message.
@@ -61,6 +66,8 @@ class GeminiLiveService @Inject constructor(
         }
 
         _connectionState.value = ConnectionState.CONNECTING
+        serviceScope.cancel()
+        serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         val request = Request.Builder()
             .url(GeminiConfig.websocketUrl)
@@ -121,25 +128,34 @@ class GeminiLiveService @Inject constructor(
                 _connectionState.value = ConnectionState.CONNECTED
             }
 
-            message.serverContent?.modelTurn?.parts?.forEach { part ->
-                part.inlineData?.let { inlineData ->
-                    if (inlineData.mimeType.startsWith("audio/pcm")) {
-                        try {
-                            val audioBytes = Base64.decode(inlineData.data, Base64.DEFAULT)
-                            // Use CoroutineScope to send to channel as this is a callback
-                            CoroutineScope(Dispatchers.IO).launch {
-                                audioOutputChannel.send(audioBytes)
+            message.serverContent?.let { serverContent ->
+                serverContent.modelTurn?.parts?.forEach { part ->
+                    part.inlineData?.let { inlineData ->
+                        if (inlineData.mimeType.startsWith("audio/pcm")) {
+                            try {
+                                val audioBytes = Base64.decode(inlineData.data, Base64.DEFAULT)
+                                serviceScope.launch {
+                                    audioOutputChannel.send(audioBytes)
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error decoding audio: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error decoding audio: ${e.message}")
                         }
+                    }
+                }
+
+                // Handle turn completion — signals end of AI speech
+                if (serverContent.turnComplete == true) {
+                    Log.d(TAG, "Turn Complete")
+                    serviceScope.launch {
+                        turnCompleteChannel.send(Unit)
                     }
                 }
             }
 
             message.toolCall?.functionCalls?.forEach { functionCall ->
                 Log.d(TAG, "Received Tool Call: ${functionCall.name}")
-                CoroutineScope(Dispatchers.IO).launch {
+                serviceScope.launch {
                     toolCallChannel.send(functionCall)
                 }
             }
@@ -225,6 +241,7 @@ class GeminiLiveService @Inject constructor(
      * Disconnect from Gemini Live API.
      */
     fun disconnect() {
+        serviceScope.cancel()
         webSocket?.close(1000, "User ended session")
         webSocket = null
         _connectionState.value = ConnectionState.DISCONNECTED

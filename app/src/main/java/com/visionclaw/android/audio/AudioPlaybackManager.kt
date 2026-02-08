@@ -7,6 +7,7 @@ import android.util.Log
 import com.visionclaw.android.gemini.GeminiConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -35,10 +36,16 @@ class AudioPlaybackManager @Inject constructor() {
 
     /**
      * Start the playback loop, draining from the audio channel.
+     * Also monitors turnComplete to unmute mic when AI finishes speaking.
      *
      * @param audioChannel Channel that receives PCM 24kHz chunks from Gemini
+     * @param turnCompleteChannel Channel that signals when AI turn is complete
      */
-    fun startPlayback(scope: CoroutineScope, audioChannel: Channel<ByteArray>) {
+    fun startPlayback(
+        scope: CoroutineScope,
+        audioChannel: Channel<ByteArray>,
+        turnCompleteChannel: Channel<Unit>? = null
+    ) {
         if (audioTrack != null) return
 
         val minBufferSize = AudioTrack.getMinBufferSize(
@@ -68,31 +75,39 @@ class AudioPlaybackManager @Inject constructor() {
         audioTrack?.play()
         Log.d(TAG, "AudioTrack started")
 
+        val isPlaying = AtomicBoolean(false)
+
+        // Audio drain loop
         playbackJob = scope.launch(Dispatchers.IO) {
             try {
-                // We use a small timeout to detect end of speech if the stream pauses,
-                // but primarily we toggle on/off based on channel activity.
-                // Since this is a simple implementation, we assume that while we are draining
-                // the channel, we are playing.
-
                 for (chunk in audioChannel) {
-                    // Notify we are starting to play
-                    withContext(Dispatchers.Main) {
-                        onPlaybackStateChanged?.invoke(true)
+                    // Only notify on transition from not-playing to playing
+                    if (isPlaying.compareAndSet(false, true)) {
+                        withContext(NonCancellable + Dispatchers.Main) {
+                            onPlaybackStateChanged?.invoke(true)
+                        }
                     }
-
                     audioTrack?.write(chunk, 0, chunk.size)
-                    
-                    // Note: We don't immediately set false here because speech comes in chunks.
-                    // Ideally we'd use 'turnComplete' from Gemini, but for now we rely on the
-                    // flow of data.
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in playback loop: ${e.message}", e)
             } finally {
-                // When channel is closed or job cancelled
-                withContext(Dispatchers.Main) {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    isPlaying.set(false)
                     onPlaybackStateChanged?.invoke(false)
+                }
+            }
+        }
+
+        // Turn complete listener — unmutes mic when AI finishes speaking
+        if (turnCompleteChannel != null) {
+            scope.launch(Dispatchers.IO) {
+                for (signal in turnCompleteChannel) {
+                    if (isPlaying.compareAndSet(true, false)) {
+                        withContext(NonCancellable + Dispatchers.Main) {
+                            onPlaybackStateChanged?.invoke(false)
+                        }
+                    }
                 }
             }
         }

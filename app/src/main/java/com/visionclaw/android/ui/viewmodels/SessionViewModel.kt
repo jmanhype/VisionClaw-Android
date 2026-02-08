@@ -86,7 +86,7 @@ class SessionViewModel @Inject constructor(
                 return
             }
             
-            audioPlaybackManager.startPlayback(viewModelScope, geminiService.audioOutputChannel)
+            audioPlaybackManager.startPlayback(viewModelScope, geminiService.audioOutputChannel, geminiService.turnCompleteChannel)
             audioPlaybackManager.onPlaybackStateChanged = { isPlaying ->
                 audioCaptureManager.setMuted(isPlaying)
             }
