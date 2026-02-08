@@ -3,10 +3,15 @@ package com.visionclaw.android.gemini
 import android.util.Base64
 import android.util.Log
 import com.squareup.moshi.Moshi
+import com.visionclaw.android.openclaw.ToolDeclarations
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import okhttp3.*
+import okio.ByteString
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -20,7 +25,6 @@ import javax.inject.Singleton
  * - Receiving PCM audio responses (24kHz mono Int16)
  * - Receiving tool calls and sending tool responses
  *
- * TODO: Implement the WebSocket connection and message handling.
  * Reference: docs/ARCHITECTURE.md for the full protocol spec.
  */
 @Singleton
@@ -49,37 +53,148 @@ class GeminiLiveService @Inject constructor(
 
     /**
      * Connect to Gemini Live API and send setup message.
-     *
-     * TODO: Implement WebSocket connection using OkHttp.
-     * 1. Create WebSocket request to GeminiConfig.websocketUrl
-     * 2. On open: send SetupMessage with model, generationConfig, systemInstruction, tools
-     * 3. On message: parse JSON, route to audio/toolCall channels
-     * 4. On failure/close: update connectionState
      */
     fun connect() {
-        TODO("Implement WebSocket connection — see ARCHITECTURE.md for protocol")
+        if (_connectionState.value == ConnectionState.CONNECTED || _connectionState.value == ConnectionState.CONNECTING) {
+            Log.w(TAG, "Already connected or connecting")
+            return
+        }
+
+        _connectionState.value = ConnectionState.CONNECTING
+
+        val request = Request.Builder()
+            .url(GeminiConfig.websocketUrl)
+            .build()
+
+        webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.d(TAG, "WebSocket Opened")
+                sendSetupMessage(webSocket)
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                handleMessage(text)
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "WebSocket Closing: $code $reason")
+                _connectionState.value = ConnectionState.DISCONNECTED
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.e(TAG, "WebSocket Failure: ${t.message}", t)
+                _connectionState.value = ConnectionState.ERROR
+            }
+        })
+    }
+
+    private fun sendSetupMessage(ws: WebSocket) {
+        val setupMessage = SetupMessage(
+            setup = SetupConfig(
+                model = GeminiConfig.MODEL,
+                generationConfig = GenerationConfig(
+                    responseModalities = listOf("AUDIO"),
+                    speechConfig = SpeechConfig(
+                        voiceConfig = VoiceConfig(
+                            prebuiltVoiceConfig = PrebuiltVoiceConfig(voiceName = "Aoede")
+                        )
+                    )
+                ),
+                systemInstruction = Content(
+                    parts = listOf(Part(text = GeminiConfig.SYSTEM_INSTRUCTION))
+                ),
+                tools = listOf(ToolDeclarations.executeTool)
+            )
+        )
+
+        val json = moshi.adapter(SetupMessage::class.java).toJson(setupMessage)
+        Log.d(TAG, "Sending Setup: $json")
+        ws.send(json)
+    }
+
+    private fun handleMessage(text: String) {
+        try {
+            val message = moshi.adapter(ServerContentMessage::class.java).fromJson(text) ?: return
+
+            if (message.setupComplete != null) {
+                Log.d(TAG, "Setup Complete")
+                _connectionState.value = ConnectionState.CONNECTED
+            }
+
+            message.serverContent?.modelTurn?.parts?.forEach { part ->
+                part.inlineData?.let { inlineData ->
+                    if (inlineData.mimeType.startsWith("audio/pcm")) {
+                        try {
+                            val audioBytes = Base64.decode(inlineData.data, Base64.DEFAULT)
+                            // Use CoroutineScope to send to channel as this is a callback
+                            CoroutineScope(Dispatchers.IO).launch {
+                                audioOutputChannel.send(audioBytes)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error decoding audio: ${e.message}")
+                        }
+                    }
+                }
+            }
+
+            message.toolCall?.functionCalls?.forEach { functionCall ->
+                Log.d(TAG, "Received Tool Call: ${functionCall.name}")
+                CoroutineScope(Dispatchers.IO).launch {
+                    toolCallChannel.send(functionCall)
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing message: ${e.message}", e)
+        }
     }
 
     /**
      * Send PCM audio chunk to Gemini.
      *
      * @param pcmData Raw PCM Int16 bytes (16kHz mono)
-     *
-     * TODO: Wrap in RealtimeInputMessage with mimeType "audio/pcm;rate=16000"
      */
     fun sendAudio(pcmData: ByteArray) {
-        TODO("Encode PCM to base64, wrap in realtimeInput JSON, send via WebSocket")
+        if (_connectionState.value != ConnectionState.CONNECTED) return
+
+        val base64Audio = Base64.encodeToString(pcmData, Base64.NO_WRAP)
+        val message = RealtimeInputMessage(
+            realtimeInput = RealtimeInput(
+                mediaChunks = listOf(
+                    MediaChunk(
+                        mimeType = "audio/pcm;rate=${GeminiConfig.INPUT_SAMPLE_RATE}",
+                        data = base64Audio
+                    )
+                )
+            )
+        )
+
+        val json = moshi.adapter(RealtimeInputMessage::class.java).toJson(message)
+        webSocket?.send(json)
     }
 
     /**
      * Send JPEG video frame to Gemini.
      *
      * @param jpegData JPEG bytes
-     *
-     * TODO: Wrap in RealtimeInputMessage with mimeType "image/jpeg"
      */
     fun sendVideoFrame(jpegData: ByteArray) {
-        TODO("Encode JPEG to base64, wrap in realtimeInput JSON, send via WebSocket")
+        if (_connectionState.value != ConnectionState.CONNECTED) return
+
+        val base64Image = Base64.encodeToString(jpegData, Base64.NO_WRAP)
+        val message = RealtimeInputMessage(
+            realtimeInput = RealtimeInput(
+                mediaChunks = listOf(
+                    MediaChunk(
+                        mimeType = "image/jpeg",
+                        data = base64Image
+                    )
+                )
+            )
+        )
+
+        val json = moshi.adapter(RealtimeInputMessage::class.java).toJson(message)
+        webSocket?.send(json)
     }
 
     /**
@@ -87,11 +202,23 @@ class GeminiLiveService @Inject constructor(
      *
      * @param callId The function call ID from the original tool call
      * @param result The result text from OpenClaw
-     *
-     * TODO: Wrap in ToolResponseMessage and send via WebSocket
      */
     fun sendToolResponse(callId: String, result: String) {
-        TODO("Build ToolResponseMessage JSON and send via WebSocket")
+        if (_connectionState.value != ConnectionState.CONNECTED) return
+
+        val message = ToolResponseMessage(
+            toolResponse = ToolResponse(
+                functionResponses = listOf(
+                    FunctionResponse(
+                        id = callId,
+                        response = mapOf("result" to result)
+                    )
+                )
+            )
+        )
+
+        val json = moshi.adapter(ToolResponseMessage::class.java).toJson(message)
+        webSocket?.send(json)
     }
 
     /**

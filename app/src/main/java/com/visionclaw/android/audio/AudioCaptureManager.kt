@@ -4,6 +4,7 @@ import android.Manifest
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
 import android.util.Log
 import androidx.annotation.RequiresPermission
 import com.visionclaw.android.gemini.GeminiConfig
@@ -18,11 +19,11 @@ import javax.inject.Singleton
  *
  * Output: PCM Int16, 16kHz mono, 100ms chunks (3200 bytes per chunk)
  *
- * TODO: Implement AudioRecord capture loop.
- * - Use AudioRecord with VOICE_COMMUNICATION source for echo cancellation
- * - Read in 100ms chunks
- * - Emit chunks via callback/channel to GeminiLiveService
- * - Support muting during AI speech playback
+ * Implementation details:
+ * - Uses AudioRecord with VOICE_COMMUNICATION source for echo cancellation
+ * - Reads in 100ms chunks
+ * - Emits chunks via callback to GeminiLiveService
+ * - Supports muting during AI speech playback
  */
 @Singleton
 class AudioCaptureManager @Inject constructor() {
@@ -47,25 +48,75 @@ class AudioCaptureManager @Inject constructor() {
      * Start capturing audio from the microphone.
      *
      * @param onChunk Callback invoked with each PCM chunk (100ms of audio)
-     *
-     * TODO: Implement:
-     * 1. Create AudioRecord with VOICE_COMMUNICATION source
-     * 2. Apply AcousticEchoCanceler if available
-     * 3. Start recording loop in coroutine
-     * 4. Read CHUNK_SIZE bytes per iteration
-     * 5. If not muted, invoke onChunk with the PCM data
      */
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun startCapture(scope: CoroutineScope, onChunk: (ByteArray) -> Unit) {
-        TODO("Implement AudioRecord capture loop — see ARCHITECTURE.md audio pipeline")
+        if (_isRecording.value) return
+
+        val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
+        val bufferSize = maxOf(minBufferSize, CHUNK_SIZE * 2)
+
+        try {
+            audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                bufferSize
+            )
+
+            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(TAG, "AudioRecord initialization failed")
+                return
+            }
+
+            if (AcousticEchoCanceler.isAvailable()) {
+                val aec = AcousticEchoCanceler.create(audioRecord!!.audioSessionId)
+                if (aec != null) {
+                    aec.enabled = true
+                    Log.d(TAG, "AcousticEchoCanceler enabled")
+                } else {
+                    Log.w(TAG, "AcousticEchoCanceler creation failed")
+                }
+            } else {
+                Log.w(TAG, "AcousticEchoCanceler not available")
+            }
+
+            audioRecord?.startRecording()
+            _isRecording.value = true
+            Log.d(TAG, "Recording started")
+
+            captureJob = scope.launch(Dispatchers.IO) {
+                val buffer = ByteArray(CHUNK_SIZE)
+                while (isActive && _isRecording.value) {
+                    val readResult = audioRecord?.read(buffer, 0, CHUNK_SIZE) ?: 0
+                    if (readResult > 0) {
+                        if (!_isMuted.value) {
+                            onChunk(buffer.copyOf(readResult))
+                        }
+                    } else {
+                        Log.w(TAG, "AudioRecord read error: $readResult")
+                    }
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting capture: ${e.message}", e)
+            stopCapture()
+        }
     }
 
     fun stopCapture() {
         captureJob?.cancel()
-        audioRecord?.stop()
-        audioRecord?.release()
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping capture: ${e.message}")
+        }
         audioRecord = null
         _isRecording.value = false
+        Log.d(TAG, "Recording stopped")
     }
 
     /** Mute mic during AI speech to prevent echo/feedback */

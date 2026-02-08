@@ -10,15 +10,8 @@ import javax.inject.Singleton
  *
  * Requires: com.meta.wearable:mwdat-camera dependency.
  *
- * TODO: Implement when Meta DAT SDK is integrated.
- * - Initialize Wearables SDK
- * - Subscribe to videoFramePublisher
- * - Throttle to ~1fps
- * - Convert frames to JPEG
- * - Emit via callback
- *
- * For now, use PhoneCameraManager for development/testing.
- * The DAT SDK also provides a MockDevice for testing without hardware.
+ * Current implementation is a stub because the SDK dependency requires
+ * authenticated access to GitHub Packages.
  */
 @Singleton
 class GlassesCameraManager @Inject constructor() {
@@ -27,10 +20,27 @@ class GlassesCameraManager @Inject constructor() {
     }
 
     fun startStreaming(onFrame: (ByteArray) -> Unit) {
-        TODO("Implement Meta DAT SDK video streaming — requires mwdat-camera dependency")
+        Log.e(TAG, "Meta DAT SDK not available. Cannot start streaming from glasses.")
+        // Implementation Guide:
+        /*
+        val device = ServiceLocator.get(DeviceManager::class.java).selectedDevice
+        if (device == null) {
+            Log.e(TAG, "No glasses connected")
+            return
+        }
+        
+        device.camera.subscribe { frame ->
+            // Throttle to VIDEO_FRAME_INTERVAL_MS
+            // Convert frame to JPEG
+            // onFrame(jpegBytes)
+        }
+        */
     }
 
     fun stopStreaming() {
-        TODO("Stop DAT SDK streaming")
+        Log.d(TAG, "Meta DAT SDK stub: stopStreaming called")
+        /*
+        device.camera.unsubscribe()
+        */
     }
 }
