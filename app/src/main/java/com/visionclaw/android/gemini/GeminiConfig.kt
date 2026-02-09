@@ -27,9 +27,9 @@ object GeminiConfig {
     // Only needed if you want Gemini to perform actions via OpenClaw.
     // See README.md for setup instructions.
     // ---------------------------------------------------------------
-    const val OPENCLAW_HOST = "http://speeds-MacBook-Pro.local"
+    const val OPENCLAW_HOST = "http://NewPC.local"
     const val OPENCLAW_PORT = 18789
-    const val OPENCLAW_GATEWAY_TOKEN = "YOUR_OPENCLAW_GATEWAY_TOKEN"
+    const val OPENCLAW_GATEWAY_TOKEN = "18aa0970a8a1009c7bafcc0eaeb44cddcaf3d20daea8cf49"
 
     val websocketUrl: String
         get() = "$WEBSOCKET_BASE_URL?key=$API_KEY"
