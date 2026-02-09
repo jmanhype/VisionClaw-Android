@@ -18,7 +18,8 @@ import com.visionclaw.android.gemini.GeminiConfig
 @Composable
 fun MainScreen(
     onStartPhone: () -> Unit = {},
-    onStartGlasses: () -> Unit = {}
+    onStartGlasses: () -> Unit = {},
+    onOpenHistory: () -> Unit = {}
 ) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -82,6 +83,15 @@ fun MainScreen(
             enabled = false // Not implemented yet
         ) {
             Text("Start with Glasses")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        TextButton(
+            onClick = onOpenHistory,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Conversation History")
         }
     }
 }

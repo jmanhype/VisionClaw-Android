@@ -13,6 +13,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.visionclaw.android.ui.screens.HistoryScreen
 import com.visionclaw.android.ui.screens.MainScreen
 import com.visionclaw.android.ui.screens.SessionScreen
 import com.visionclaw.android.ui.viewmodels.SessionViewModel
@@ -36,8 +37,15 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onStartGlasses = {
                                     navController.navigate("session/GLASSES")
+                                },
+                                onOpenHistory = {
+                                    navController.navigate("history")
                                 }
                             )
+                        }
+                        
+                        composable("history") {
+                            HistoryScreen(onBack = { navController.popBackStack() })
                         }
                         
                         composable(

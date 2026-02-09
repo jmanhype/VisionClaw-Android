@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -49,6 +50,9 @@ class GeminiLiveService @Inject constructor(
 
     // Channel for received tool calls
     val toolCallChannel = Channel<FunctionCall>(Channel.BUFFERED)
+
+    /** Emits Gemini text response parts (from modelTurn.parts) for conversation logging */
+    val geminiTextFlow = MutableSharedFlow<String>(extraBufferCapacity = 64)
 
     // Signal when AI finishes speaking (turnComplete received)
     val turnCompleteChannel = Channel<Unit>(Channel.CONFLATED)
@@ -130,6 +134,13 @@ class GeminiLiveService @Inject constructor(
 
             message.serverContent?.let { serverContent ->
                 serverContent.modelTurn?.parts?.forEach { part ->
+                    part.text?.let { text ->
+                        if (text.isNotBlank()) {
+                            serviceScope.launch {
+                                geminiTextFlow.emit(text)
+                            }
+                        }
+                    }
                     part.inlineData?.let { inlineData ->
                         if (inlineData.mimeType.startsWith("audio/pcm")) {
                             try {
