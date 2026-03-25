@@ -1,61 +1,48 @@
-# VisionClaw Android
+# VisionClaw-Android
 
-Android port of [VisionClaw](https://github.com/sseanliu/VisionClaw) — a real-time AI assistant for Meta Ray-Ban smart glasses.
+Android client for [VisionClaw](https://github.com/sseanliu/VisionClaw). Connects to Gemini Live API for real-time voice + vision on Meta Ray-Ban smart glasses or a phone camera. Optionally delegates actions to [OpenClaw](https://github.com/nichochar/openclaw).
 
-See what you see, hear what you say, and take actions on your behalf — all through voice.
+Built with Kotlin, Jetpack Compose, CameraX, and Hilt.
 
-Built on [Meta Wearables DAT SDK (Android)](https://github.com/facebook/meta-wearables-dat-android) + [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) + [OpenClaw](https://github.com/nichochar/openclaw) (optional).
+## Status
 
-## What It Does
+Early-stage prototype. The Meta DAT SDK dependency is commented out in `build.gradle.kts` pending GitHub Packages credentials, so glasses streaming is stubbed. Phone-camera mode works.
 
-Put on your glasses (or use your phone camera), tap the AI button, and talk:
+## What it does
 
-- **"What am I looking at?"** — Gemini sees through your camera and describes the scene
-- **"Add milk to my shopping list"** — delegates to OpenClaw for real-world actions
-- **"Send a message to John saying I'll be late"** — routes through OpenClaw
-- **"Search for the best coffee shops nearby"** — web search, results spoken back
+1. Captures camera frames (phone back camera or Meta Ray-Ban stream).
+2. Opens a WebSocket to Gemini Live API, sending audio + images.
+3. Gemini responds with spoken audio.
+4. If OpenClaw is configured, Gemini can route tool calls (add to list, send message, web search) through it.
 
-## Quick Start
+## Requirements
 
-### 1. Clone and open
+| Requirement | Version / Notes |
+|---|---|
+| Android | 10+ (API 29) |
+| Android Studio | Flamingo or later |
+| Kotlin | 2.0 (via Compose compiler plugin) |
+| Gemini API key | Free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| Meta Ray-Ban glasses | Optional -- phone camera works for testing |
+| OpenClaw server | Optional -- needed only for agentic actions |
+
+## Setup
 
 ```bash
 git clone https://github.com/jmanhype/VisionClaw-Android.git
 ```
 
-Open in Android Studio.
-
-### 2. Add your Gemini API key
-
-In `app/src/main/java/com/visionclaw/android/gemini/GeminiConfig.kt`:
+Open in Android Studio. Set your key in `app/src/main/java/com/visionclaw/android/gemini/GeminiConfig.kt`:
 
 ```kotlin
 const val API_KEY = "YOUR_GEMINI_API_KEY"
 ```
 
-Get a free key at [Google AI Studio](https://aistudio.google.com/apikey).
+Build and run on a physical device (emulator lacks camera + mic).
 
-### 3. Build and run
+### OpenClaw (optional)
 
-Select your Android device and hit Run.
-
-### 4. Try it out
-
-**Phone mode (no glasses needed):**
-1. Tap "Start on Phone" — uses back camera
-2. Tap the AI button to start a Gemini Live session
-3. Talk — it sees through your camera and responds with voice
-
-**With Meta Ray-Ban glasses:**
-1. Pair glasses via Meta AI app (enable Developer Mode)
-2. Tap "Start Streaming"
-3. Tap the AI button for voice + vision conversation
-
-## Setup: OpenClaw (Optional)
-
-OpenClaw gives Gemini the ability to take real-world actions. Without it, Gemini is voice + vision only.
-
-In `GeminiConfig.kt`, update:
+In `GeminiConfig.kt`:
 
 ```kotlin
 const val OPENCLAW_HOST = "http://Your-Mac.local"
@@ -63,20 +50,33 @@ const val OPENCLAW_PORT = 18789
 const val OPENCLAW_GATEWAY_TOKEN = "your-gateway-token-here"
 ```
 
-See [OpenClaw setup guide](https://github.com/nichochar/openclaw) for gateway configuration.
+See the [OpenClaw repo](https://github.com/nichochar/openclaw) for gateway setup.
 
-## Requirements
+## Project structure
 
-- Android 10+ (API 29+)
-- Android Studio Flamingo+
-- Gemini API key ([free](https://aistudio.google.com/apikey))
-- Meta Ray-Ban glasses (optional — phone mode for testing)
-- OpenClaw on your Mac/PC (optional — for agentic actions)
+```
+app/src/main/java/com/visionclaw/android/
+  audio/          AudioCaptureManager, AudioPlaybackManager
+  camera/         GlassesCameraManager, PhoneCameraManager
+  di/             Hilt AppModule
+  gemini/         GeminiConfig, GeminiLiveService, GeminiModels
+  openclaw/       OpenClawBridge, ToolCallRouter, ToolCallModels
+  ui/screens/     MainScreen, SessionScreen (Compose)
+  ui/viewmodels/  SessionViewModel
+  util/           AudioUtil, ImageUtil
+```
+
+## Known limitations
+
+- Meta DAT SDK integration is scaffolded but not wired (dependency commented out).
+- No automated tests.
+- API key is hardcoded in source rather than injected via build config or secrets.
+- Audio pipeline assumes single-channel 16-bit PCM; no codec negotiation.
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full architecture, module map, WebSocket protocol, and audio pipeline details.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## License
 
-Apache 2.0 — See [LICENSE](LICENSE).
+Apache 2.0
